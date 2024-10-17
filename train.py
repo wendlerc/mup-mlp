@@ -147,7 +147,7 @@ if __name__ == "__main__":
     )
 
 
-    run_name = f"{'mup_' if args.use_mup else ''}w{args.width}_lr{args.lr}_e{args.n_epochs}_b{args.batch_size}_{random.randint(1000, 9999)}"
+    run_name = f"{'mup_' if args.use_mup else 'std_'}w{args.width}_lr{args.lr}_e{args.n_epochs}_b{args.batch_size}_{random.randint(1000, 9999)}"
     
     if args.use_wandb:
         logger = WandbLogger(project=args.wandb_project, entity=args.wandb_entity, name=run_name)
