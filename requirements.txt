@@ -1,0 +1,4 @@
+matplotlib
+lightning
+wandb
+torchvision
