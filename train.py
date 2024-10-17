@@ -113,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--width', type=int, default=1024, help='Network width (hidden layer size)')
     parser.add_argument('--n_epochs', type=int, default=50, help='Number of epochs')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--use_mup', action='store_true', help='Use μP scaling')
     parser.add_argument('--wandb_project', type=str, default='cifar10-mlp', help='Weights & Biases project name')
     parser.add_argument('--wandb_entity', type=str, default='chrisxx', help='Weights & Biases entity name')
@@ -128,8 +129,8 @@ if __name__ == "__main__":
     train_dataset = CIFAR10(root='./data', train=True, download=True, transform=transform)
     val_dataset = CIFAR10(root='./data', train=False, download=True, transform=transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     # Model training
     model = CIFAR10MLP(hidden_size=args.width, lr=args.lr, use_mup=args.use_mup)
@@ -156,7 +157,9 @@ if __name__ == "__main__":
     trainer.fit(model, train_loader, val_loader)
 
     # Test the model
-    trainer.test(model, val_loader)
+    # Use a single device for testing to ensure each sample is evaluated once
+    test_trainer = pl.Trainer(devices=1, num_nodes=1)
+    test_trainer.test(model, val_loader)
 
     # Note: The `use_mup` flag is parsed but not used in this code.
     # You'll need to implement the μP scaling logic separately.
