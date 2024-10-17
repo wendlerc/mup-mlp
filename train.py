@@ -18,7 +18,8 @@ class CIFAR10MLP(pl.LightningModule):
                  num_classes=10, 
                  lr=1e-3,
                  use_mup=False,
-                 prefactor=2**0.5):
+                 prefactor=2**0.5,
+                 num_epochs=None):
         super().__init__()
         self.save_hyperparameters()
         self.lr = lr
@@ -26,6 +27,7 @@ class CIFAR10MLP(pl.LightningModule):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_classes = num_classes
+        self.num_epochs = num_epochs
 
         if use_mup:
             self.fc1 = nn.Linear(input_size, hidden_size, bias=False)
@@ -136,7 +138,7 @@ if __name__ == "__main__":
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     # Model training
-    model = CIFAR10MLP(hidden_size=args.width, lr=args.lr, use_mup=args.use_mup)
+    model = CIFAR10MLP(hidden_size=args.width, lr=args.lr, use_mup=args.use_mup, num_epochs=args.n_epochs)
 
     checkpoint_callback = ModelCheckpoint(
         monitor='val_acc',
