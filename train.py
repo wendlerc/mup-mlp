@@ -8,6 +8,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 import argparse
+import random
 
 
 class CIFAR10MLP(pl.LightningModule):
@@ -72,19 +73,21 @@ class CIFAR10MLP(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        y_hat, latents = self(x)
+        y_hat, _ = self(x)
         loss = F.cross_entropy(y_hat, y)
         acc = (y_hat.argmax(dim=1) == y).float().mean()
-        self.log('val_loss', loss, sync_dist=True)
-        self.log('val_acc', acc, sync_dist=True)
+        self.log('val_loss', loss, sync_dist=True, on_step=False, on_epoch=True)
+        self.log('val_acc', acc, sync_dist=True, on_step=False, on_epoch=True)
+        return {'val_loss': loss, 'val_acc': acc}
 
     def test_step(self, batch, batch_idx):
         x, y = batch
         y_hat, _ = self(x)
         loss = F.cross_entropy(y_hat, y)
         acc = (y_hat.argmax(dim=1) == y).float().mean()
-        self.log('test_loss', loss, sync_dist=True)
-        self.log('test_acc', acc, sync_dist=True)
+        self.log('test_loss', loss, sync_dist=True, on_step=False, on_epoch=True)
+        self.log('test_acc', acc, sync_dist=True, on_step=False, on_epoch=True)
+        return {'test_loss': loss, 'test_acc': acc}
 
     def configure_optimizers(self):
         if self.use_mup:
@@ -143,10 +146,13 @@ if __name__ == "__main__":
         mode='max',
     )
 
+
+    run_name = f"{'mup_' if args.use_mup else ''}w{args.width}_lr{args.lr}_e{args.n_epochs}_b{args.batch_size}_{random.randint(1000, 9999)}"
+    
     if args.use_wandb:
-        logger = WandbLogger(project=args.wandb_project, entity=args.wandb_entity)
+        logger = WandbLogger(project=args.wandb_project, entity=args.wandb_entity, name=run_name)
     else:
-        logger = TensorBoardLogger("tb_logs", name="cifar10_mlp")
+        logger = TensorBoardLogger("tb_logs", name=run_name)
 
     trainer = pl.Trainer(
         max_epochs=args.n_epochs,
@@ -158,8 +164,6 @@ if __name__ == "__main__":
 
     # Test the model
     # Use a single device for testing to ensure each sample is evaluated once
-    test_trainer = pl.Trainer(devices=1, num_nodes=1)
+    test_trainer = pl.Trainer(devices=1, num_nodes=1, logger=logger)
     test_trainer.test(model, val_loader)
 
-    # Note: The `use_mup` flag is parsed but not used in this code.
-    # You'll need to implement the μP scaling logic separately.
