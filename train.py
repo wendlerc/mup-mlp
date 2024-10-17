@@ -19,7 +19,8 @@ class CIFAR10MLP(pl.LightningModule):
                  lr=1e-3,
                  use_mup=False,
                  prefactor=2**0.5,
-                 num_epochs=None):
+                 num_epochs=None,
+                 optimizer='sgd'):
         super().__init__()
         self.save_hyperparameters()
         self.lr = lr
@@ -28,6 +29,7 @@ class CIFAR10MLP(pl.LightningModule):
         self.hidden_size = hidden_size
         self.num_classes = num_classes
         self.num_epochs = num_epochs
+        self.optimizier = optimizer
 
         if use_mup:
             self.fc1 = nn.Linear(input_size, hidden_size, bias=False)
@@ -54,7 +56,7 @@ class CIFAR10MLP(pl.LightningModule):
         a2 = self.fc2(h1)
         h2 = F.relu(a2)
         a3 = self.fc3(h2)
-        return a3, {"a1": a1, "h1": h1, "a2": a2, "h2": h2}
+        return a3, {"a1": a1, "h1": h1, "a2": a2, "h2": h2, "a3": a3}
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -62,8 +64,8 @@ class CIFAR10MLP(pl.LightningModule):
         loss = F.cross_entropy(y_hat, y)
         self.log('train_loss', loss, sync_dist=True)
         for latent_name, latent in latents.items():
-            self.log(f'param norm {latent_name}', latent.norm(), sync_dist=True)
-            self.log(f'param mean(abs({latent_name}))', torch.mean(torch.abs(latent)), sync_dist=True)
+            self.log(f'act norm {latent_name}', latent.norm(), sync_dist=True)
+            self.log(f'act mean(abs({latent_name}))', torch.mean(torch.abs(latent)), sync_dist=True)
         
         # Log gradients
         for name, param in self.named_parameters():
@@ -96,19 +98,38 @@ class CIFAR10MLP(pl.LightningModule):
             hidden_size = self.hidden_size
             input_size = self.input_size
             num_classes = self.num_classes
-            lr_fc1 = self.lr * hidden_size/input_size
-            lr_fc2 = self.lr * hidden_size/hidden_size
-            lr_fc3 = self.lr * num_classes/hidden_size
+            if self.optimizier == 'sgd':
+                lr_fc1 = self.lr * hidden_size/input_size
+                lr_fc2 = self.lr * hidden_size/hidden_size
+                lr_fc3 = self.lr * num_classes/hidden_size
 
-            param_groups = [
-                {'params': self.fc1.parameters(), 'lr': lr_fc1},
-                {'params': self.fc2.parameters(), 'lr': lr_fc2},
-                {'params': self.fc3.parameters(), 'lr': lr_fc3},
-            ]
+                param_groups = [
+                    {'params': self.fc1.parameters(), 'lr': lr_fc1},
+                    {'params': self.fc2.parameters(), 'lr': lr_fc2},
+                    {'params': self.fc3.parameters(), 'lr': lr_fc3},
+                ]
 
-            optimizer = torch.optim.SGD(param_groups)
+                optimizer = torch.optim.SGD(param_groups)
+            elif self.optimizier == 'adam':
+                lr_fc1 = self.lr * 1./input_size
+                lr_fc2 = self.lr * 1./hidden_size
+                lr_fc3 = self.lr * num_classes/hidden_size
+
+                param_groups = [
+                    {'params': self.fc1.parameters(), 'lr': lr_fc1},
+                    {'params': self.fc2.parameters(), 'lr': lr_fc2},
+                    {'params': self.fc3.parameters(), 'lr': lr_fc3},
+                ]
+                optimizer = torch.optim.Adam(param_groups)
+            else:
+                raise ValueError(f"Unknown optimizer: {self.optimizier}")
         else:
-            optimizer = torch.optim.SGD(self.parameters(), lr=self.lr)
+            if self.optimizier == 'sgd':
+                optimizer = torch.optim.SGD(self.parameters(), lr=self.lr)
+            elif self.optimizier == 'adam':
+                optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+            else:
+                raise ValueError(f"Unknown optimizer: {self.optimizier}")
         return optimizer
 
 
@@ -123,6 +144,7 @@ if __name__ == "__main__":
     parser.add_argument('--wandb_project', type=str, default='cifar10-mlp', help='Weights & Biases project name')
     parser.add_argument('--wandb_entity', type=str, default='chrisxx', help='Weights & Biases entity name')
     parser.add_argument('--use_wandb', action='store_true', help='Use Weights & Biases for logging')
+    parser.add_argument('--optimizer', type=str, default='sgd', help='Optimizer to use (sgd or adam)')
     args = parser.parse_args()
 
     # Data preparation
@@ -138,7 +160,11 @@ if __name__ == "__main__":
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     # Model training
-    model = CIFAR10MLP(hidden_size=args.width, lr=args.lr, use_mup=args.use_mup, num_epochs=args.n_epochs)
+    model = CIFAR10MLP(hidden_size=args.width, 
+                       lr=args.lr, 
+                       use_mup=args.use_mup, 
+                       num_epochs=args.n_epochs,
+                       optimizer=args.optimizer)
 
     checkpoint_callback = ModelCheckpoint(
         monitor='val_acc',
@@ -149,7 +175,7 @@ if __name__ == "__main__":
     )
 
 
-    run_name = f"{'mup_' if args.use_mup else 'std_'}w{args.width}_lr{args.lr}_e{args.n_epochs}_b{args.batch_size}_{random.randint(1000, 9999)}"
+    run_name = f"{'mup_' if args.use_mup else 'std_'}{args.optimizer}_w{args.width}_lr{args.lr}_e{args.n_epochs}_b{args.batch_size}_{random.randint(1000, 9999)}"
     
     if args.use_wandb:
         logger = WandbLogger(project=args.wandb_project, entity=args.wandb_entity, name=run_name)
