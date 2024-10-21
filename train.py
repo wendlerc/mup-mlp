@@ -48,6 +48,21 @@ class CIFAR10MLP(pl.LightningModule):
             self.fc2 = nn.Linear(hidden_size, hidden_size, bias=False)
             self.fc3 = nn.Linear(hidden_size, num_classes, bias=False)
 
+        self.a1_0 = None
+        self.h1_0 = None
+        self.a2_0 = None
+        self.h2_0 = None
+        self.a3_0 = None
+        self.x_0 = None
+
+        self.W0_0 = self.fc1.weight.detach().cpu()
+        self.W1_0 = self.fc2.weight.detach().cpu()
+        self.W2_0 = self.fc3.weight.detach().cpu()
+        self.sigma_max_0 = torch.svd(self.W0_0).S[0]
+        self.sigma_max_1 = torch.svd(self.W1_0).S[0]
+        self.sigma_max_2 = torch.svd(self.W2_0).S[0]
+
+
 
     def forward(self, x):
         x = x.view(x.size(0), -1)  # Flatten the input
@@ -56,6 +71,13 @@ class CIFAR10MLP(pl.LightningModule):
         a2 = self.fc2(h1)
         h2 = F.relu(a2)
         a3 = self.fc3(h2)
+        if self.a1_0 is None:
+            self.a1_0 = a1.detach().cpu()
+            self.h1_0 = h1.detach().cpu()
+            self.a2_0 = a2.detach().cpu()
+            self.h2_0 = h2.detach().cpu()
+            self.a3_0 = a3.detach().cpu()
+            self.x_0 = x.detach().cpu()
         return a3, {"a1": a1, "h1": h1, "a2": a2, "h2": h2, "a3": a3}
 
     def training_step(self, batch, batch_idx):
@@ -63,15 +85,35 @@ class CIFAR10MLP(pl.LightningModule):
         y_hat, latents = self(x)
         loss = F.cross_entropy(y_hat, y)
         self.log('train_loss', loss, sync_dist=True)
-        for latent_name, latent in latents.items():
-            self.log(f'act norm {latent_name}', latent.norm(), sync_dist=True)
-            self.log(f'act mean(abs({latent_name}))', torch.mean(torch.abs(latent)), sync_dist=True)
-        
-        # Log gradients
-        for name, param in self.named_parameters():
-            if param.grad is not None:
-                self.log(f'grad norm {name}', param.grad.norm(), sync_dist=True)
-                self.log(f'grad mean(abs(grad_{name}))', torch.mean(torch.abs(param.grad)), sync_dist=True)
+
+        # on the logging step we need to do some additional computations
+        if self.global_step % self.trainer.log_every_n_steps == 0:
+            W0 = self.fc1.weight.detach().cpu()
+            W1 = self.fc2.weight.detach().cpu()
+            W2 = self.fc3.weight.detach().cpu()
+
+            # log spectral norm of W0 - W0_0
+            self.log('spectral_norm_W0', torch.svd(W0 - self.W0_0).S[0]/self.sigma_max_0)
+            self.log('spectral_norm_W1', torch.svd(W1 - self.W1_0).S[0]/self.sigma_max_1)
+            self.log('spectral_norm_W2', torch.svd(W2 - self.W2_0).S[0]/self.sigma_max_2)
+
+            # log changes in the activations of the first batch
+            y_hat_first, latents_first = self(self.x_0.to(x.device))
+            for latent_name, latent in latents_first.items():
+                change = torch.norm(latent.detach().cpu() - getattr(self, latent_name + '_0'), dim=-1)
+                change /= torch.norm(getattr(self, latent_name + '_0'), dim=-1)
+                self.log(f'act change {latent_name}', change.mean())
+
+
+            for latent_name, latent in latents.items():
+                self.log(f'act norm {latent_name}', latent.norm(dim=-1).mean(), sync_dist=True)
+                self.log(f'act mean(abs({latent_name}))', torch.mean(torch.abs(latent)), sync_dist=True)
+            
+            # Log gradients
+            for name, param in self.named_parameters():
+                if param.grad is not None:
+                    self.log(f'grad norm {name}', param.grad.norm(), sync_dist=True)
+                    self.log(f'grad mean(abs(grad_{name}))', torch.mean(torch.abs(param.grad)), sync_dist=True)
         
         return loss
 
