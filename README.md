@@ -23,7 +23,3 @@ https://wandb.ai/chrisxx/cifar10-adam
 https://wandb.ai/chrisxx/cifar10-adam-just-following-the-table
 
 https://wandb.ai/chrisxx/cifar10-sgd
-
-# Study group
-
-This implementation was part of our study group on muP: https://www.notion.so/Deep-learning-study-group-zero-shot-hyperparameter-transfer-3a0c41098d194238a380de9cd20cd735
