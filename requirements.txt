@@ -2,3 +2,4 @@ matplotlib
 lightning
 wandb
 torchvision
+tensorboard
