@@ -16,7 +16,9 @@ If you have any questions please don't hesitate to open an issue.
 
 ## WANDB training runs
 
-https://wandb.ai/chrisxx/cifar10-adam?nw=nwuserchrisxx
+https://wandb.ai/chrisxx/cifar10-adam
+
 https://wandb.ai/chrisxx/cifar10-adam-just-following-the-table
-https://wandb.ai/chrisxx/cifar10-sgd?nw=nwuserchrisxx
+
+https://wandb.ai/chrisxx/cifar10-sgd
 
