@@ -9,6 +9,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 import argparse
 import random
+import wandb
 
 
 class CIFAR10MLP(pl.LightningModule):
@@ -20,7 +21,8 @@ class CIFAR10MLP(pl.LightningModule):
                  use_mup=False,
                  prefactor=2**0.5,
                  num_epochs=None,
-                 optimizer='sgd'):
+                 optimizer='sgd',
+                 follow_table=False):
         super().__init__()
         self.save_hyperparameters()
         self.lr = lr
@@ -30,6 +32,7 @@ class CIFAR10MLP(pl.LightningModule):
         self.num_classes = num_classes
         self.num_epochs = num_epochs
         self.optimizier = optimizer
+        self.follow_table = follow_table
 
         if use_mup:
             self.fc1 = nn.Linear(input_size, hidden_size, bias=False)
@@ -48,6 +51,21 @@ class CIFAR10MLP(pl.LightningModule):
             self.fc2 = nn.Linear(hidden_size, hidden_size, bias=False)
             self.fc3 = nn.Linear(hidden_size, num_classes, bias=False)
 
+        self.a1_0 = None
+        self.h1_0 = None
+        self.a2_0 = None
+        self.h2_0 = None
+        self.a3_0 = None
+        self.x_0 = None
+
+        self.W0_0 = self.fc1.weight.detach().cpu()
+        self.W1_0 = self.fc2.weight.detach().cpu()
+        self.W2_0 = self.fc3.weight.detach().cpu()
+        self.sigma_max_0 = torch.svd(self.W0_0).S[0]
+        self.sigma_max_1 = torch.svd(self.W1_0).S[0]
+        self.sigma_max_2 = torch.svd(self.W2_0).S[0]
+
+
 
     def forward(self, x):
         x = x.view(x.size(0), -1)  # Flatten the input
@@ -56,22 +74,51 @@ class CIFAR10MLP(pl.LightningModule):
         a2 = self.fc2(h1)
         h2 = F.relu(a2)
         a3 = self.fc3(h2)
+        if self.a1_0 is None:
+            self.a1_0 = a1.detach().cpu()
+            self.h1_0 = h1.detach().cpu()
+            self.a2_0 = a2.detach().cpu()
+            self.h2_0 = h2.detach().cpu()
+            self.a3_0 = a3.detach().cpu()
+            self.x_0 = x.detach().cpu()
         return a3, {"a1": a1, "h1": h1, "a2": a2, "h2": h2, "a3": a3}
+
+    def log_changes(self, run):
+        W0 = self.fc1.weight.detach().cpu()
+        W1 = self.fc2.weight.detach().cpu()
+        W2 = self.fc3.weight.detach().cpu()
+
+        # log spectral norm of W0 - W0_0
+        run.summary['spectral_norm_W0'] = torch.svd(W0 - self.W0_0).S[0]/self.sigma_max_0
+        run.summary['spectral_norm_W1'] = torch.svd(W1 - self.W1_0).S[0]/self.sigma_max_1
+        run.summary['spectral_norm_W2'] = torch.svd(W2 - self.W2_0).S[0]/self.sigma_max_2
+
+        # log changes in the activations of the first batch
+        y_hat_first, latents_first = self(self.x_0.to(self.device))
+        for latent_name, latent in latents_first.items():
+            change = torch.norm(latent.detach().cpu() - getattr(self, latent_name + '_0'), dim=-1)
+            change /= torch.norm(getattr(self, latent_name + '_0'), dim=-1)
+            run.summary[f'act_change_{latent_name}'] = change.mean().item()
+
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat, latents = self(x)
         loss = F.cross_entropy(y_hat, y)
         self.log('train_loss', loss, sync_dist=True)
-        for latent_name, latent in latents.items():
-            self.log(f'act norm {latent_name}', latent.norm(), sync_dist=True)
-            self.log(f'act mean(abs({latent_name}))', torch.mean(torch.abs(latent)), sync_dist=True)
-        
-        # Log gradients
-        for name, param in self.named_parameters():
-            if param.grad is not None:
-                self.log(f'grad norm {name}', param.grad.norm(), sync_dist=True)
-                self.log(f'grad mean(abs(grad_{name}))', torch.mean(torch.abs(param.grad)), sync_dist=True)
+
+        # on the logging step we need to do some additional computations
+        if self.global_step % self.trainer.log_every_n_steps == 0:
+
+            for latent_name, latent in latents.items():
+                self.log(f'act norm {latent_name}', latent.norm(dim=-1).mean(), sync_dist=True)
+                self.log(f'act mean(abs({latent_name}))', torch.mean(torch.abs(latent)), sync_dist=True)
+            
+            # Log gradients
+            for name, param in self.named_parameters():
+                if param.grad is not None:
+                    self.log(f'grad norm {name}', param.grad.norm(), sync_dist=True)
+                    self.log(f'grad mean(abs(grad_{name}))', torch.mean(torch.abs(param.grad)), sync_dist=True)
         
         return loss
 
@@ -111,9 +158,15 @@ class CIFAR10MLP(pl.LightningModule):
 
                 optimizer = torch.optim.SGD(param_groups)
             elif self.optimizier == 'adam':
-                lr_fc1 = self.lr * 1./input_size
-                lr_fc2 = self.lr * 1./hidden_size
-                lr_fc3 = self.lr * num_classes/hidden_size
+                # just using the numbers in the table
+                if self.follow_table:
+                    lr_fc1 = self.lr * 1.
+                    lr_fc2 = self.lr * 1./hidden_size
+                    lr_fc3 = self.lr * 1./hidden_size
+                else:
+                    lr_fc1 = self.lr * 1./input_size
+                    lr_fc2 = self.lr * 1./hidden_size
+                    lr_fc3 = self.lr * num_classes/hidden_size
 
                 param_groups = [
                     {'params': self.fc1.parameters(), 'lr': lr_fc1},
@@ -141,6 +194,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_epochs', type=int, default=50, help='Number of epochs')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--use_mup', action='store_true', help='Use μP scaling')
+    parser.add_argument('--follow_table', action='store_true', help='Use Weights & Biases for logging')
     parser.add_argument('--wandb_project', type=str, default='cifar10-mlp', help='Weights & Biases project name')
     parser.add_argument('--wandb_entity', type=str, default='chrisxx', help='Weights & Biases entity name')
     parser.add_argument('--use_wandb', action='store_true', help='Use Weights & Biases for logging')
@@ -164,7 +218,8 @@ if __name__ == "__main__":
                        lr=args.lr, 
                        use_mup=args.use_mup, 
                        num_epochs=args.n_epochs,
-                       optimizer=args.optimizer)
+                       optimizer=args.optimizer,
+                       follow_table=args.follow_table)
 
     checkpoint_callback = ModelCheckpoint(
         monitor='val_acc',
@@ -189,6 +244,9 @@ if __name__ == "__main__":
     )
 
     trainer.fit(model, train_loader, val_loader)
+    print(logger.experiment)
+    if args.use_wandb:
+        model.log_changes(logger.experiment)
 
     # Test the model
     # Use a single device for testing to ensure each sample is evaluated once
