@@ -4,4 +4,4 @@ wandb
 torchvision
 tensorboard
 pandas
-matplotlib
+
