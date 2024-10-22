@@ -1,10 +1,15 @@
-# minimum todo
+# Implementation of muP for MLP
 
-for mup/std for 3 widths (2^7, ..., 2^11) for 6 lrs (2^(-14),..., 2^(-4)) each train on cifar
-log
-* training error
-* validation error
-* activation norms / np.abs(activation.mean())?
-* gradient norms / np.abs(activation.mean())?
+A simple implementation of muP parametrization and adaptive learning rates based on: 
+```
+@article{yang2023spectral,
+  title={A spectral condition for feature learning},
+  author={Yang, Greg and Simon, James B and Bernstein, Jeremy},
+  journal={arXiv preprint arXiv:2310.17813},
+  year={2023}
+}
+```
 
---> training script that gets lr and width as input and logs everything
+Both standard training as well as mup training are implemented in `train.py`. I mostly used `wandb` for logging, but most of the logging also works for `tensorboard`. The visualization notebooks however are for my `wandb` setting. The first part for plotting the hyperparameter transfer curves only relies in the provided csv files.
+
+If you have any questions please don't hesitate to open an issue.
