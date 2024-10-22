@@ -1,4 +1,4 @@
-# Implementation of muP for MLP
+# Implementation of muP for vanilla MLP
 
 A simple implementation of muP parametrization and adaptive learning rates based on: 
 ```
